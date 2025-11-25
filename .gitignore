@@ -1,7 +1,10 @@
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.env  # For API keys
-*.db  # For databases like ChromaDB.DS_Store
+.DS_Store
+.env
 venv/
+aura_memory.db/
+pretrained_models/
+wav2vec2_checkpoints/
+output.wav
+*.tflite
