@@ -4,3 +4,4 @@ __pycache__/
 *.pyd
 .env  # For API keys
 *.db  # For databases like ChromaDB.DS_Store
+venv/
