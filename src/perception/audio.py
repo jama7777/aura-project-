@@ -2,6 +2,7 @@ import openwakeword
 import pyaudio
 import whisper
 import torchaudio
+import torch
 # Monkeypatch torchaudio.list_audio_backends for speechbrain compatibility
 if not hasattr(torchaudio, "list_audio_backends"):
     torchaudio.list_audio_backends = lambda: ["soundfile"] # Mock return
@@ -12,27 +13,48 @@ import threading
 import queue
 import numpy as np
 import os
+from transformers import pipeline
 
-# Initialize models
-try:
-    model = whisper.load_model("tiny")
-    print("Whisper model loaded.")
-except Exception as e:
-    print(f"Error loading Whisper model: {e}")
-    model = None
+# Global model variables
+model = None
+emotion_model = None
+text_emotion_classifier = None
 
-try:
-    # Use the correct class for emotion recognition
-    emotion_model = EncoderClassifier.from_hparams(
-        source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
-        savedir="pretrained_models/emotion_model"
-    )
-    print("Emotion model loaded.")
-except Exception as e:
-    print(f"Error loading Emotion model: {e}")
-    emotion_model = None
+def load_audio_models():
+    global model, emotion_model
+    if model is None:
+        try:
+            model = whisper.load_model("tiny")
+            print("Whisper model loaded.")
+        except Exception as e:
+            print(f"Error loading Whisper model: {e}")
+            model = None
+
+    if emotion_model is None:
+        try:
+            # Use the correct class for emotion recognition
+            emotion_model = EncoderClassifier.from_hparams(
+                source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
+                savedir="pretrained_models/emotion_model"
+            )
+            print("Audio Emotion model loaded.")
+        except Exception as e:
+            print(f"Error loading Audio Emotion model: {e}")
+            emotion_model = None
+
+def load_text_emotion_model():
+    global text_emotion_classifier
+    if text_emotion_classifier is None:
+        try:
+            print("Loading text emotion model...")
+            text_emotion_classifier = pipeline("text-classification", model="j-hartmann/emotion-english-distilroberta-base", top_k=1)
+            print("Text emotion model loaded.")
+        except Exception as e:
+            print(f"Error loading Text Emotion model: {e}")
+            text_emotion_classifier = None
 
 input_queue = queue.Queue()
+latest_audio_emotion = "neutral"
 
 def audio_thread():
     try:
@@ -60,9 +82,11 @@ def audio_thread():
                     triggered = True
             else:
                 # Fallback: simple energy threshold for testing
-                if np.abs(pcm).mean() > 500: # Arbitrary threshold
-                    # triggered = True # Too sensitive, let's rely on user input or just record chunks
-                    pass
+                # Calculate RMS
+                rms = np.sqrt(np.mean(pcm.astype(np.float32)**2))
+                if rms > 1000: # Threshold
+                    print(f"Sound detected (RMS: {rms:.2f}), triggering...")
+                    triggered = True
 
             # For MVP, let's just record if we detect loud sound or if wake word triggered
             if triggered:
@@ -79,17 +103,68 @@ def audio_thread():
                     result = model.transcribe(audio_data)
                     text = result["text"]
                 
-                emotion = "neutral"
+                # Audio Emotion
+                audio_emotion = "neutral"
                 if emotion_model:
-                    # SpeechBrain expects a tensor
-                    import torch
-                    signal = torch.tensor(audio_data).unsqueeze(0)
-                    emotion_out = emotion_model.classify_batch(signal)
-                    emotion = emotion_out[3][0] # Get the label
+                    try:
+                        # Save to temp file for stable classification
+                        temp_wav = "temp_emotion.wav"
+                        import soundfile as sf
+                        sf.write(temp_wav, audio_data, 16000)
+                        
+                        # Load manually to avoid torchcodec issues in classify_file
+                        signal, fs = torchaudio.load(temp_wav)
+                        
+                        # Classify
+                        # Use classify_file for simplicity as it handles loading correctly usually
+                        # But since we have signal, let's try to fix classify_batch usage
+                        # The error 'ModuleDict' object has no attribute 'compute_features' suggests internal issue.
+                        # Let's try classify_file with the temp file.
+                        emotion_out = emotion_model.classify_file(temp_wav)
+                        # emotion_out is usually (out_prob, score, index, text_lab)
+                        audio_emotion = emotion_out[3][0] 
+                        
+                        # Cleanup
+                        if os.path.exists(temp_wav):
+                            os.remove(temp_wav)
+                            
+                    except Exception as e_emo:
+                        print(f"Audio Emotion classification failed: {e_emo}")
+                        audio_emotion = "neutral"
+
+                # Text Emotion
+                text_emotion = "neutral"
+                if text_emotion_classifier and text.strip():
+                    try:
+                        preds = text_emotion_classifier(text)
+                        # Debug print
+                        # print(f"Text Emotion Preds: {preds}")
+                        # preds structure depends on pipeline, usually [{'label': 'joy', 'score': 0.9}] (list of dicts)
+                        if isinstance(preds, list) and len(preds) > 0:
+                            if isinstance(preds[0], dict):
+                                text_emotion = preds[0].get('label', 'neutral')
+                            elif isinstance(preds[0], list): # Nested list sometimes
+                                if len(preds[0]) > 0 and isinstance(preds[0][0], dict):
+                                    text_emotion = preds[0][0].get('label', 'neutral')
+                        
+                        print(f"Text Emotion Analysis: {text_emotion}")
+                    except Exception as e:
+                        print(f"Text emotion error: {e}")
+
+                # Combine emotions
+                # If text emotion is strong (not neutral), use it.
+                # Or if audio emotion is neutral, use text emotion.
+                final_emotion = audio_emotion
+                if text_emotion != "neutral":
+                    final_emotion = text_emotion
+                
+                # Update global state (to be accessed by API)
+                global latest_audio_emotion
+                latest_audio_emotion = final_emotion
 
                 if text.strip():
-                    input_queue.put({"text": text, "emotion": emotion})
-                    print(f"Text: {text}, Emotion: {emotion}")
+                    input_queue.put({"text": text, "emotion": final_emotion})
+                    print(f"Text: {text}, Emotion: {final_emotion} (Audio: {audio_emotion}, Text: {text_emotion})")
             
     except Exception as e:
         print(f"Error in audio thread: {e}")

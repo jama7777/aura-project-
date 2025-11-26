@@ -9,3 +9,6 @@ pyaudio
 
 TTS
 numpy
+pyglet
+ratcave
+panda3d
