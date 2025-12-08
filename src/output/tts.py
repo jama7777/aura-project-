@@ -16,15 +16,23 @@ def load_tts_model():
             print(f"Error loading TTS model: {e}")
             tts = None
 
+import uuid
+
+# ... (imports)
+
 def speak(text, return_file=False):
     if not tts:
         print(f"TTS not available. Text: {text}")
         return None
 
     try:
-        output_file = "output.wav"
-        if os.path.exists(output_file):
-            os.remove(output_file)
+        if return_file:
+            unique_filename = f"output_{uuid.uuid4()}.wav"
+            output_file = unique_filename
+        else:
+            output_file = "output.wav"
+            if os.path.exists(output_file):
+                os.remove(output_file)
             
         tts.tts_to_file(text=text, file_path=output_file)
         

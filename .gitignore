@@ -8,3 +8,5 @@ pretrained_models/
 wav2vec2_checkpoints/
 output.wav
 *.tflite
+temp_*.wav
+.vscode/

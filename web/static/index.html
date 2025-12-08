@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AURA - Virtual Friend</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+    <div id="canvas-container"></div>
+
+    <div id="ui-overlay">
+        <div id="status-bar">
+            <div class="status-item">
+                <span id="connection-status" class="status-dot online"></span>
+                <span>AURA Online</span>
+            </div>
+            <div class="status-item">
+                <span>Emotion: </span>
+                <span id="current-emotion">Neutral</span>
+            </div>
+        </div>
+
+        <div id="chat-container">
+            <div id="chat-history">
+                <!-- Messages will appear here -->
+            </div>
+        </div>
+
+        <div id="controls">
+            <button id="camera-btn" class="control-btn" title="Toggle Camera">
+                📷
+            </button>
+            <div class="input-wrapper">
+                <input type="text" id="text-input" placeholder="Type a message..." autocomplete="off">
+                <button id="send-btn" class="control-btn">➤</button>
+            </div>
+            <button id="mic-btn" class="control-btn" title="Hold to Talk">
+                🎤
+            </button>
+        </div>
+
+        <video id="user-camera" autoplay playsinline muted class="hidden"></video>
+    </div>
+
+    <script type="module" src="/static/js/main.js"></script>
+</body>
+
+</html>

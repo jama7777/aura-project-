@@ -56,6 +56,37 @@ def load_text_emotion_model():
 input_queue = queue.Queue()
 latest_audio_emotion = "neutral"
 
+
+def transcribe_audio_file(file_path):
+    global model
+    if model is None:
+        load_audio_models()
+    
+    if model:
+        try:
+            result = model.transcribe(file_path)
+            return result["text"]
+        except Exception as e:
+            print(f"Error transcribing file: {e}")
+            return ""
+    return ""
+
+def analyze_emotion_file(file_path):
+    global emotion_model
+    if emotion_model is None:
+        load_audio_models()
+        
+    if emotion_model:
+        try:
+            # Classify
+            emotion_out = emotion_model.classify_file(file_path)
+            # emotion_out is usually (out_prob, score, index, text_lab)
+            return emotion_out[3][0]
+        except Exception as e:
+            print(f"Audio Emotion classification failed: {e}")
+            return "neutral"
+    return "neutral"
+
 def audio_thread():
     try:
         # Check if aura.tflite exists, if not use a default or skip
@@ -85,8 +116,9 @@ def audio_thread():
                 # Calculate RMS
                 rms = np.sqrt(np.mean(pcm.astype(np.float32)**2))
                 if rms > 1000: # Threshold
-                    print(f"Sound detected (RMS: {rms:.2f}), triggering...")
-                    triggered = True
+                    # print(f"Sound detected (RMS: {rms:.2f}), triggering...")
+                    # triggered = True
+                    pass # Disable auto-trigger for now to avoid noise
 
             # For MVP, let's just record if we detect loud sound or if wake word triggered
             if triggered:
@@ -98,48 +130,23 @@ def audio_thread():
                 
                 audio_data = np.hstack(frames).astype(np.float32) / 32768.0
                 
-                text = ""
-                if model:
-                    result = model.transcribe(audio_data)
-                    text = result["text"]
+                # Save to temp file for consistent processing
+                temp_wav = "temp_input.wav"
+                import soundfile as sf
+                sf.write(temp_wav, audio_data, 16000)
                 
-                # Audio Emotion
-                audio_emotion = "neutral"
-                if emotion_model:
-                    try:
-                        # Save to temp file for stable classification
-                        temp_wav = "temp_emotion.wav"
-                        import soundfile as sf
-                        sf.write(temp_wav, audio_data, 16000)
-                        
-                        # Load manually to avoid torchcodec issues in classify_file
-                        signal, fs = torchaudio.load(temp_wav)
-                        
-                        # Classify
-                        # Use classify_file for simplicity as it handles loading correctly usually
-                        # But since we have signal, let's try to fix classify_batch usage
-                        # The error 'ModuleDict' object has no attribute 'compute_features' suggests internal issue.
-                        # Let's try classify_file with the temp file.
-                        emotion_out = emotion_model.classify_file(temp_wav)
-                        # emotion_out is usually (out_prob, score, index, text_lab)
-                        audio_emotion = emotion_out[3][0] 
-                        
-                        # Cleanup
-                        if os.path.exists(temp_wav):
-                            os.remove(temp_wav)
-                            
-                    except Exception as e_emo:
-                        print(f"Audio Emotion classification failed: {e_emo}")
-                        audio_emotion = "neutral"
+                text = transcribe_audio_file(temp_wav)
+                audio_emotion = analyze_emotion_file(temp_wav)
+                
+                # Cleanup
+                if os.path.exists(temp_wav):
+                    os.remove(temp_wav)
 
                 # Text Emotion
                 text_emotion = "neutral"
                 if text_emotion_classifier and text.strip():
                     try:
                         preds = text_emotion_classifier(text)
-                        # Debug print
-                        # print(f"Text Emotion Preds: {preds}")
-                        # preds structure depends on pipeline, usually [{'label': 'joy', 'score': 0.9}] (list of dicts)
                         if isinstance(preds, list) and len(preds) > 0:
                             if isinstance(preds[0], dict):
                                 text_emotion = preds[0].get('label', 'neutral')
@@ -152,8 +159,6 @@ def audio_thread():
                         print(f"Text emotion error: {e}")
 
                 # Combine emotions
-                # If text emotion is strong (not neutral), use it.
-                # Or if audio emotion is neutral, use text emotion.
                 final_emotion = audio_emotion
                 if text_emotion != "neutral":
                     final_emotion = text_emotion
@@ -164,7 +169,7 @@ def audio_thread():
 
                 if text.strip():
                     input_queue.put({"text": text, "emotion": final_emotion})
-                    print(f"Text: {text}, Emotion: {final_emotion} (Audio: {audio_emotion}, Text: {text_emotion})")
+                    print(f"Text: {text}, Emotion: {final_emotion}")
             
     except Exception as e:
         print(f"Error in audio thread: {e}")

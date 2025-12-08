@@ -19,12 +19,16 @@ class Avatar(ShowBase):
         # Window Properties
         props = WindowProperties()
         props.setTitle("AURA Avatar")
-        props.setSize(600, 600)
+        props.setSize(800, 600)
         self.win.requestProperties(props)
         
         self.disableMouse()
         self.setBackgroundColor(0.2, 0.2, 0.2) # Grey background
         self.render.setAntialias(AntialiasAttrib.MAuto)
+
+        # UI Imports
+        from direct.gui.DirectGui import DirectButton, DirectFrame, OnscreenText
+        from panda3d.core import TextNode
 
         # Lighting
         dlight = DirectionalLight('dlight')
@@ -46,6 +50,7 @@ class Avatar(ShowBase):
         self.character = None
         self.is_actor = False
         self.current_anim = None
+        self.requested_anim = None
 
         # 1. Try Loading Character FBX (Animated)
         char_fbx = os.path.join(model_dir, 'character.fbx')
@@ -115,6 +120,9 @@ class Avatar(ShowBase):
                 
                 # Center it
                 self.character.setPos(-center.getX() * scale_factor, -center.getY() * scale_factor + 5, -center.getZ() * scale_factor - 5)
+                # Fix Orientation (Mixamo models are often Y-up, Panda is Z-up)
+                # Trying 0,0,0 first as requested by user to fix orientation issues
+                self.character.setHpr(180, 0, 0) 
                 
                 # Start Animation if Actor
                 if self.is_actor:
@@ -136,11 +144,28 @@ class Avatar(ShowBase):
             pass
 
         # Camera
-        self.camera.setPos(0, -30, 5)
+        self.camera.setPos(0, -60, 10) # Moved back
         self.camera.lookAt(0, 0, 0)
         
-        # Add Camera Spin Task
-        self.taskMgr.add(self.spinCameraTask, "SpinCameraTask")
+        # Add Camera Spin Task - DISABLED
+        # self.taskMgr.add(self.spinCameraTask, "SpinCameraTask")
+        self.taskMgr.add(self.updateAnimTask, "UpdateAnimTask")
+
+        # UI Overlay
+        self.ui_frame = DirectFrame(frameColor=(0, 0, 0, 0.5),
+                                    frameSize=(-1.2, 1.2, -0.15, 0.15),
+                                    pos=(0, 0, -0.85))
+        
+        buttons = ['dance', 'happy', 'sad', 'hug']
+        x = -0.6
+        for anim in buttons:
+            DirectButton(text=anim.title(),
+                         scale=0.07,
+                         pos=(x, 0, 0),
+                         parent=self.ui_frame,
+                         command=self.set_animation,
+                         extraArgs=[anim])
+            x += 0.4
 
     def spinCameraTask(self, task):
         angleDegrees = task.time * 10.0
@@ -150,24 +175,34 @@ class Avatar(ShowBase):
         return task.cont
 
     def set_animation(self, anim_type):
-        if not self.character or not self.is_actor:
-            return
+        # Thread-safe: just set the requested state, let the main thread handle it
+        self.requested_anim = anim_type
+        print(f"Animation requested: {anim_type}")
+
+    def updateAnimTask(self, task):
+        if self.requested_anim:
+            anim_type = self.requested_anim
+            self.requested_anim = None # Clear request
             
-        print(f"Avatar Animation: {anim_type}")
-        
-        target_anim = 'idle'
-        if anim_type == 'dance': target_anim = 'dance'
-        elif anim_type == 'happy': target_anim = 'jump'
-        elif anim_type == 'sad': target_anim = 'clap'
-        elif anim_type == 'hug': target_anim = 'clap'
-        
-        if target_anim != self.current_anim:
-            try:
-                self.character.stop()
-                self.character.loop(target_anim)
-                self.current_anim = target_anim
-            except Exception as e:
-                print(f"Error switching animation: {e}")
+            if not self.character or not self.is_actor:
+                return task.cont
+
+            print(f"Applying Animation: {anim_type}")
+            
+            target_anim = 'idle'
+            if anim_type == 'dance': target_anim = 'dance'
+            elif anim_type == 'happy': target_anim = 'jump'
+            elif anim_type == 'sad': target_anim = 'clap'
+            elif anim_type == 'hug': target_anim = 'clap'
+            
+            if target_anim != self.current_anim:
+                try:
+                    self.character.stop()
+                    self.character.loop(target_anim)
+                    self.current_anim = target_anim
+                except Exception as e:
+                    print(f"Error switching animation: {e}")
+        return task.cont
 
 def run_avatar():
     try:
