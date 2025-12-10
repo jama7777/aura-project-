@@ -46,32 +46,52 @@ async def startup_event():
 class ChatRequest(BaseModel):
     text: str
     emotion: str = "neutral"
+    gesture: str = "none"
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    print(f"Received chat: {request.text} ({request.emotion})")
+    print(f"Received chat: {request.text} ({request.emotion}), Gesture: {request.gesture}")
     # Process input
-    response_text = process_input({"text": request.text, "emotion": request.emotion})
+    response_text = process_input({"text": request.text, "emotion": request.emotion, "gesture": request.gesture})
     
     # Generate Audio
     audio_file = speak(response_text, return_file=True)
     
     # Determine animations (list)
+    # Determine animations (list)
     animations = []
     lower_resp = response_text.lower()
     
-    # Check for keywords and add corresponding animations
-    if "hug" in lower_resp: animations.append("hug")
-    if "dance" in lower_resp: animations.append("dance")
-    if "happy" in lower_resp: animations.append("happy")
-    if "sad" in lower_resp or "cry" in lower_resp: animations.append("sad")
-    if "clap" in lower_resp: animations.append("clap")
-    if "pray" in lower_resp: animations.append("pray")
-    if "jump" in lower_resp: animations.append("jump")
+    # Priority: Gesture -> Keywords -> Default
     
-    # If no specific animation, default to just talk (or empty list which means idle/talk)
+    # 1. Gesture Mapping (Explicit Visual Feedback)
+    if "thumbs_up" in request.gesture:
+        animations.append("happy")
+    elif "victory" in request.gesture:
+        animations.append("dance")
+    elif "wave" in request.gesture:
+        animations.append("clap") # Fallback for wave
+    elif "clap" in request.gesture:
+        animations.append("clap")
+    elif "dance" in request.gesture:
+        animations.append("dance")
+    elif "hug" in request.gesture:
+        animations.append("happy") # Fallback for hug
+        
+    # 2. Keyword Mapping (if no gesture specific animation or to add more)
     if not animations:
-        animations = ["talk"]
+        if "hug" in lower_resp: animations.append("happy") # Fallback
+        if "dance" in lower_resp: animations.append("dance")
+        if "happy" in lower_resp: animations.append("happy")
+        if "sad" in lower_resp or "cry" in lower_resp: animations.append("sad")
+        if "clap" in lower_resp: animations.append("clap")
+        if "pray" in lower_resp: animations.append("pray")
+        if "jump" in lower_resp: animations.append("jump")
+    
+    # If no specific animation, default to "idle" (client handles talking state separately logic)
+    # or "talk" if we had one.
+    if not animations:
+        animations = ["idle"]
     
     audio_url = f"/audio/{os.path.basename(audio_file)}" if audio_file else None
     
@@ -109,7 +129,7 @@ async def upload_audio(file: UploadFile = File(...)):
     animations = []
     lower_resp = response_text.lower()
     
-    if "hug" in lower_resp: animations.append("hug")
+    if "hug" in lower_resp: animations.append("happy")
     if "dance" in lower_resp: animations.append("dance")
     if "happy" in lower_resp: animations.append("happy")
     if "sad" in lower_resp or "cry" in lower_resp: animations.append("sad")
@@ -118,7 +138,7 @@ async def upload_audio(file: UploadFile = File(...)):
     if "jump" in lower_resp: animations.append("jump")
     
     if not animations:
-        animations = ["talk"]
+        animations = ["idle"]
     
     audio_url = f"/audio/{os.path.basename(audio_file)}" if audio_file else None
     

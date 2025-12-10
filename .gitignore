@@ -10,3 +10,4 @@ output.wav
 *.tflite
 temp_*.wav
 .vscode/
+output_*.wav

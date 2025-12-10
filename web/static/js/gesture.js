@@ -1,6 +1,7 @@
 export class GestureHandler {
-    constructor(avatar) {
+    constructor(avatar, onGesture) {
         this.avatar = avatar;
+        this.onGesture = onGesture;
         this.hands = null;
         this.camera = null;
         this.videoElement = document.getElementById('user-camera');
@@ -78,9 +79,10 @@ export class GestureHandler {
 
         if (gesture && gesture !== this.lastGesture) {
             const now = Date.now();
-            if (now - this.gestureCooldown > 1000) { // 1 second cooldown
+            if (now - this.gestureCooldown > 2000) { // 2 second cooldown to avoid spam
                 console.log(`Detected Gesture: ${gesture}`);
                 this.triggerAction(gesture);
+                if (this.onGesture) this.onGesture(gesture);
                 this.lastGesture = gesture;
                 this.gestureCooldown = now;
             }
