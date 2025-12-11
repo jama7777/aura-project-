@@ -15,8 +15,14 @@ sys.path.append(os.getcwd())
 from src.core.brain import process_input
 from src.output.tts import speak, load_tts_model
 from src.perception.audio import transcribe_audio_file, analyze_emotion_file, load_audio_models, load_text_emotion_model
+from src.perception.nv_ace import ace_client
 
 app = FastAPI()
+
+print("\n" + "="*50)
+print("AURA SERVER STARTED")
+print("ACCESS URL: http://localhost:8000")
+print("="*50 + "\n")
 
 # CORS
 app.add_middleware(
@@ -57,6 +63,11 @@ async def chat(request: ChatRequest):
     # Generate Audio
     audio_file = speak(response_text, return_file=True)
     
+    # Generate Face Animation using NVIDIA ACE
+    face_animation = None
+    if audio_file:
+        face_animation = ace_client.process_audio(audio_file)
+    
     # Determine animations (list)
     # Determine animations (list)
     animations = []
@@ -77,6 +88,16 @@ async def chat(request: ChatRequest):
         animations.append("dance")
     elif "hug" in request.gesture:
         animations.append("happy") # Fallback for hug
+
+    # 1.5 Emotion Mapping (Visual Feedback for Face)
+    if request.emotion == "happy":
+        animations.append("happy")
+    elif request.emotion == "sad":
+        animations.append("sad")
+    elif request.emotion == "surprised":
+        animations.append("happy") # Or some surprise animation if we had one
+    elif request.emotion == "angry":
+        animations.append("sad") # Or angry behavior if defined
         
     # 2. Keyword Mapping (if no gesture specific animation or to add more)
     if not animations:
@@ -98,7 +119,8 @@ async def chat(request: ChatRequest):
     return {
         "text": response_text,
         "audio_url": audio_url,
-        "animations": animations # Return list
+        "animations": animations, # Return list
+        "face_animation": face_animation # New field for blendshapes
     }
 
 @app.post("/api/audio")
@@ -115,7 +137,7 @@ async def upload_audio(file: UploadFile = File(...)):
     os.remove(temp_filename)
     
     if not text:
-        return {"text": "I couldn't hear you.", "audio_url": None, "animation": "idle"}
+        return {"input_text": None, "text": None, "audio_url": None, "animations": ["idle"]}
         
     print(f"Transcribed: {text}, Emotion: {emotion}")
     
@@ -124,6 +146,11 @@ async def upload_audio(file: UploadFile = File(...)):
     
     # Generate Audio
     audio_file = speak(response_text, return_file=True)
+
+    # Generate Face Animation using NVIDIA ACE
+    face_animation = None
+    if audio_file:
+        face_animation = ace_client.process_audio(audio_file)
     
     # Determine animations (list)
     animations = []
@@ -147,7 +174,8 @@ async def upload_audio(file: UploadFile = File(...)):
         "input_emotion": emotion,
         "text": response_text,
         "audio_url": audio_url,
-        "animations": animations
+        "animations": animations,
+        "face_animation": face_animation
     }
 
 @app.get("/audio/{filename}")

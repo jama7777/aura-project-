@@ -3,7 +3,14 @@ import chromadb
 import os
 
 # Configure Gemini
-GENAI_API_KEY = "AIzaSyAyq1urrux5d0amkeyQ-XycxD37mR8YizY"
+# Configure Gemini
+GENAI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("NV_API_KEY")
+
+if not GENAI_API_KEY:
+    # Fallback to provided key
+    GENAI_API_KEY = "AIzaSyD38c0J_CDF4Mf-3TQPIASBQtd1yMJb4EY" 
+    print("[WARNING] using fallback API key in brain.py")
+
 genai.configure(api_key=GENAI_API_KEY)
 
 # Initialize ChromaDB
@@ -48,11 +55,17 @@ def process_input(input_data):
         "You have eyes (camera) and ears (microphone). "
         "INTERACTION RULES:\n"
         "1. If the user speaks, respond naturally.\n"
-        "2. If the user makes a gesture (like thumbs_up, victory, open_palm), respond to it VISUALLY and emotionally. "
-        "   - E.g., for 'victory', say 'Yay! Peace!' or 'You're doing great!'. "
-        "   - E.g., for 'thumbs_up', say 'Awesome!'.\n"
-        "3. LEARN from the user. Refer to the 'Memory Context' below to recall past details.\n"
-        "4. Keep responses concise (1-2 sentences) and conversational."
+        "2. VITAL: If 'Gesture' in input is NOT 'none', you MUST acknowledge it IMMEDIATELY in your text.\n"
+        "   - 'victory' -> Say something like 'Peace!', 'Yay!', or 'You rock!'.\n"
+        "   - 'thumbs_up' -> Say 'Awesome!', 'Great job!', or 'Liked it?'.\n"
+        "   - 'open_palm' -> Say 'High five!', 'Hello!', or 'I see you!'.\n"
+        "   - 'fist' -> Say 'Bump!', 'Power!', or 'Strong!'.\n"
+        "3. EMOTION AWARENESS: You receive the user's emotion (e.g. 'happy', 'sad', 'angry', 'neutral').\n"
+        "   - If 'happy', match the energy! \n"
+        "   - If 'sad', be empathetic and ask what's wrong.\n"
+        "   - If 'neutral', just chat normally.\n"
+        "4. LEARN from the user. Refer to the 'Memory Context' below to recall past details.\n"
+        "5. Keep responses concise (1-2 sentences) and conversational."
     )
     
     full_prompt = (
@@ -62,16 +75,38 @@ def process_input(input_data):
         f"Response:"
     )
     
-    try:
-        model = genai.GenerativeModel('gemini-flash-latest')
-        response_obj = model.generate_content(full_prompt)
-        response = response_obj.text
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"CRITICAL GEMINI ERROR: {e}")
-        return "I'm having trouble connecting to my brain. Please check the server logs."
-    
+    # Priority list of models to try
+    # 1. 2.0 Flash Exp (Often separate quota)
+    # 2. 2.0 Flash (Standard)
+    # 3. 2.5 Flash (Newest)
+    # 4. Pro Latest (Legacy fallback)
+    candidates = [
+        'gemini-2.0-flash-exp',
+        'gemini-2.0-flash',
+        'gemini-2.5-flash',
+        'gemini-pro-latest'
+    ]
+
+    response = "I'm having trouble connecting."
+
+    for model_name in candidates:
+        try:
+            # print(f"Trying model: {model_name}...")
+            model = genai.GenerativeModel(model_name)
+            response_obj = model.generate_content(full_prompt)
+            response = response_obj.text
+            # If successful, break the loop
+            break 
+        except Exception as e:
+            # print(f"Model {model_name} failed: {e}")
+            error_str = str(e)
+            if "429" in error_str:
+                continue # Try next model
+            if "404" in error_str:
+                continue # Try next model
+            # If it's a critical error (like safety), maybe stop or try next.
+            continue
+            
     # Save to memory
     if collection:
         try:

@@ -92,7 +92,7 @@ export class GestureHandler {
     }
 
     detectGesture(landmarks) {
-        // Simple heuristic gesture detection
+        // Improved gesture detection heuristics
 
         // Finger states (Open/Closed)
         const thumbOpen = this.isThumbOpen(landmarks);
@@ -103,26 +103,32 @@ export class GestureHandler {
 
         const openFingersCount = [indexOpen, middleOpen, ringOpen, pinkyOpen].filter(Boolean).length;
 
-        // Logic
-        if (thumbOpen && openFingersCount === 4) {
-            return 'open_palm'; // 5 fingers
-        }
+        // Debug
+        // console.log(`T:${thumbOpen} I:${indexOpen} M:${middleOpen} R:${ringOpen} P:${pinkyOpen} (Count: ${openFingersCount})`);
 
-        if (!thumbOpen && openFingersCount === 0) {
-            return 'fist'; // 0 fingers
-        }
-
+        // 1. Victory (Index + Middle Open, others closed)
         if (indexOpen && middleOpen && !ringOpen && !pinkyOpen) {
-            return 'victory'; // Peace sign
+            return 'victory';
         }
 
+        // 2. Thumbs Up (Thumb open, others closed or curled)
+        // Strict: Thumb open, Index/Middle/Ring/Pinky closed.
         if (thumbOpen && openFingersCount === 0) {
-            return 'thumbs_up';
+            // Check orientation: Thumb tip should be higher than IP (upright)
+            if (landmarks[4].y < landmarks[3].y) {
+                return 'thumbs_up';
+            }
         }
 
-        // Thumbs down is harder with just landmarks relative to wrist without orientation, 
-        // but we can check if thumb tip is below thumb IP joint and other fingers are closed.
-        // For simplicity, let's stick to these 4 first.
+        // 3. Open Palm / Wave (All fingers open)
+        if (thumbOpen && openFingersCount === 4) {
+            return 'open_palm';
+        }
+
+        // 4. Fist (All fingers closed)
+        if (!thumbOpen && openFingersCount === 0) {
+            return 'fist';
+        }
 
         return null;
     }

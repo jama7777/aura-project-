@@ -3,6 +3,10 @@ import { GestureHandler } from './gesture.js';
 
 const avatar = new Avatar();
 let currentEmotion = "neutral";
+// Emotion Trigger State
+let lastTriggeredEmotion = null;
+let emotionStartTime = 0;
+let emotionCooldown = 0;
 
 const gestureHandler = new GestureHandler(avatar, (gesture) => {
     // Send gesture to backend
@@ -31,6 +35,20 @@ function log(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // SECURITY CHECK: Navigator.mediaDevices is undefined in insecure contexts (non-localhost HTTP)
+    if (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1' && location.protocol !== 'https:') {
+        const warning = "⚠️ SECURITY RESTRICTION: Camera & Mic are BLOCKED by browsers on non-HTTPS connections (except localhost). Please access this site via http://localhost:8000 on this machine.";
+        log(warning);
+        addMessage(warning, 'aura');
+        alert(warning);
+        // Disable buttons
+        document.getElementById('mic-btn').disabled = true;
+        document.getElementById('camera-btn').disabled = true;
+        document.getElementById('mic-btn').style.opacity = '0.5';
+        document.getElementById('camera-btn').style.opacity = '0.5';
+        return;
+    }
+
     avatar.init();
 
     // Initialize Face API
@@ -45,25 +63,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadFaceAPI() {
     log("Loading Face API models...");
     try {
-        await faceapi.nets.tinyFaceDetector.loadFromUri('/assets/models');
+        log("Loading Face API models...");
+        // Tuning for High Accuracy: Using SSD MobileNet V1
+        // This model is slower but much more accurate than TinyFaceDetector
+        await faceapi.nets.ssdMobilenetv1.loadFromUri('/assets/models');
         await faceapi.nets.faceExpressionNet.loadFromUri('/assets/models');
-        log("Face API models loaded.");
+        log("Face API models (SSD MobileNet V1) loaded successfully.");
     } catch (e) {
-        log("Error loading Face API models. Make sure /assets/models exists or use CDN models.");
-        // Fallback or retry? For now, we assume user might need to download models.
-        // Actually, face-api needs model files. We can try to load from a public URL if local fails?
-        // Let's try loading from a public CDN if local 404s, but face-api usually expects a directory.
-        // For this task, strict Web UI requirement, we might not have models locally.
-        // I'll assume we need to point to a CDN or user needs to put models in folders.
-        // Strategy: Use CDN base URL for models.
+        log("Local models not found, attempting CDN fallback...");
         try {
             const modelUrl = 'https://justadudewhohacks.github.io/face-api.js/models';
-            await faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl);
+            await faceapi.nets.ssdMobilenetv1.loadFromUri(modelUrl);
             await faceapi.nets.faceExpressionNet.loadFromUri(modelUrl);
-            log("Face API models loaded from CDN.");
+            log("Face API models (SSD MobileNet V1) loaded from CDN.");
         } catch (err) {
-            log(`Failed to load Face Models: ${err}`);
-            addMessage("⚠️ Face API failed to load. Emotion detection disabled.", 'aura');
+            console.error("Face API Error:", err);
+            log(`Failed to load Face Models: ${err.message}`);
+            addMessage("⚠️ Face detection disabled (Models failed to load).", 'aura');
         }
     }
 }
@@ -81,7 +97,7 @@ function setupEventListeners() {
     sendBtn.addEventListener('click', sendMessage);
 
     // Mic Input - TOGGLE Mode
-    micBtn.addEventListener('click', toggleRecording);
+    micBtn.addEventListener('click', toggleMicrophone);
 
     // Camera Toggle
     cameraBtn.addEventListener('click', toggleCamera);
@@ -142,13 +158,8 @@ function triggerManualGesture(gesture) {
 }
 
 
-function toggleRecording() {
-    if (isRecording) {
-        stopRecording();
-    } else {
-        startRecording();
-    }
-}
+// toggleRecording removed - used toggleMicrophone instead
+
 
 async function sendMessage() {
     const input = document.getElementById('text-input');
@@ -180,8 +191,12 @@ let silenceStart = Date.now();
 let isSpeaking = false;
 let vadInterval;
 
-async function startRecording() {
-    if (isRecording) return;
+async function toggleMicrophone() {
+    if (isRecording) {
+        log("Manual stop requested. Sending audio...");
+        stopRecording();
+        return;
+    }
 
     try {
         log("Requesting microphone access...");
@@ -225,22 +240,33 @@ async function startRecording() {
         clearInterval(vadInterval);
         vadInterval = setInterval(() => {
             analyser.getByteFrequencyData(dataArray);
+            analyser.getByteFrequencyData(dataArray);
             const volume = dataArray.reduce((a, b) => a + b) / dataArray.length;
 
+            // Debug Volume Visual
+            // log(`Vol: ${volume.toFixed(1)}`); // Spammy, but helpful if user opens console.
+            const micBtn = document.getElementById('mic-btn');
+            if (volume > 5) {
+                micBtn.style.boxShadow = `0 0 ${volume}px #00ff00`; // Glow based on volume
+            } else {
+                micBtn.style.boxShadow = 'none';
+            }
+
             // Thresholds - Adjusted for better sensitivity
-            const speakThreshold = 20; // Slightly increased to avoid noise
-            const silenceThreshold = 10;
+            const speakThreshold = 25; // Increased to avoid background noise triggering (was 10)
+            const silenceThreshold = 5; // Lowered (was 8)
 
             if (volume > speakThreshold) {
                 if (!isSpeaking) {
                     isSpeaking = true;
                     log("Voice detected... (User Speaking)");
                     document.getElementById('mic-btn').classList.add('speaking');
+                    // Add visual pulse or indicator if possible
                 }
                 silenceStart = Date.now();
             } else if (volume < silenceThreshold) {
-                // Wait for 2.0s silence to be sure user is done
-                if (isSpeaking && (Date.now() - silenceStart > 2000)) {
+                // Wait for 2.5s silence to be sure user is done
+                if (isSpeaking && (Date.now() - silenceStart > 2500)) {
                     log("Silence detected. Sending audio...");
                     stopRecording();
                 }
@@ -318,12 +344,20 @@ function handleResponse(data) {
         audio.play().then(() => {
             // log("Audio playback started.");
             avatar.setTalking(true);
+
+            // Sync Face Animation
+            if (data.face_animation) {
+                log(`Starting Face Animation (${data.face_animation.length} frames)`);
+                startFaceSync(audio, data.face_animation);
+            }
+
         }).catch(e => {
             log(`Audio playback failed: ${e.message}`);
         });
 
         audio.onended = () => {
             avatar.setTalking(false);
+            stopFaceSync();
             avatar.playAnimation('idle');
             window.currentAudio = null;
             // Loop functionality: If "Always On", maybe restart listening?
@@ -338,7 +372,7 @@ function handleResponse(data) {
             // Wait a moment before listening to avoid self-triggering from echo
             setTimeout(() => {
                 log("Auto-restarting listener...");
-                startRecording();
+                toggleMicrophone(); // Changed from startRecording()
             }, 500);
         };
     }
@@ -354,22 +388,54 @@ function handleResponse(data) {
 
         if (anims.length > 0) {
             avatar.playSequence(anims, () => {
-                avatar.playAnimation('idle');
+                // Only return to idle if not talking
+                if (window.currentAudio && !window.currentAudio.paused) {
+                    // do nothing, let talk continue
+                } else {
+                    avatar.playAnimation('idle');
+                }
             });
         }
     } else if (data.animation && data.animation !== 'talk') {
         // Fallback for old API
         avatar.playAnimation(data.animation, true);
     }
-
-    // Update emotion UI
-    const emotionText = (data.animations && data.animations.length > 0) ? data.animations.join(", ") : (data.animation || "Neutral");
-    // Don't overwrite current-emotion with response emotion, 
-    // we want to show USER emotion there? 
-    // Actually the UI says "Emotion: [Neutral]" usually refers to the User's detected emotion or Avatar's state?
-    // In status bar: "Emotion: Neutral". Let's stick to showing USER's detected emotion live.
-    // So we DON'T update it from response data here.
 }
+
+let faceSyncInterval;
+function startFaceSync(audio, frames) {
+    if (faceSyncInterval) clearInterval(faceSyncInterval);
+
+    // Sort frames by time just in case
+    // frames.sort((a, b) => a.time - b.time);
+
+    // Use requestAnimationFrame for smoother look? 
+    // Or setInterval aligned to fps (e.g. 60fps = 16ms)
+
+    faceSyncInterval = setInterval(() => {
+        if (!audio || audio.paused || audio.ended) {
+            stopFaceSync();
+            return;
+        }
+
+        const currentTime = audio.currentTime;
+
+        // Find the frame closest to current time
+        // Optimization: track last index to avoid full search
+        const frame = frames.find(f => Math.abs(f.time - currentTime) < 0.05); // 50ms window
+
+        if (frame) {
+            avatar.updateFace(frame.blendshapes);
+        }
+
+    }, 16); // ~60fps
+}
+
+function stopFaceSync() {
+    if (faceSyncInterval) clearInterval(faceSyncInterval);
+    if (window.avatar) window.avatar.resetFace();
+}
+
 
 function addMessage(text, sender) {
     const history = document.getElementById('chat-history');
@@ -423,30 +489,87 @@ function startFaceDetection(video) {
     const statusSpan = document.getElementById('current-emotion');
 
     faceInterval = setInterval(async () => {
-        if (!video || video.paused || video.ended) return;
+        if (!video || video.paused || video.ended || video.readyState < 2) return;
 
         // Detect emotions
-        // tinyFaceDetector is faster/lighter
+        // Tuning: inputSize 320 (lighter/faster), scoreThreshold 0.2 (very sensitive)
+        // This is a "Catch All" mode to debug if detection works at all.
+        const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.2 });
+
         try {
-            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
-                .withFaceExpressions();
+            const detections = await faceapi.detectAllFaces(video, options).withFaceExpressions();
 
             if (detections && detections.length > 0) {
+                // Visual Feedback
+                video.style.border = "3px solid #00ff00";
+                video.style.boxShadow = "0 0 20px #00ff00";
+
                 // Get dominant emotion
                 const expressions = detections[0].expressions;
                 const sorted = Object.entries(expressions).sort((a, b) => b[1] - a[1]);
                 const dominant = sorted[0];
 
-                if (dominant[1] > 0.5) { // Threshold
+                // Debug log occasionally
+                // if (Math.random() < 0.1) log(`Face detected: ${dominant[0]} (${(dominant[1]*100).toFixed(0)}%)`);
+
+                if (dominant[1] > 0.2) { // Extremely low threshold for debugging
                     currentEmotion = dominant[0];
-                    statusSpan.textContent = currentEmotion.charAt(0).toUpperCase() + currentEmotion.slice(1);
+                    statusSpan.textContent = currentEmotion.charAt(0).toUpperCase() + currentEmotion.slice(1) + ` (${(dominant[1] * 100).toFixed(0)}%)`;
+                    statusSpan.style.color = "#00ff00";
+
+                    // Auto-Trigger Logic
+                    const now = Date.now();
+                    // Ignore neutral and ensure cooldown (5s) passed (was 15s)
+                    if (currentEmotion !== 'neutral' && (now - emotionCooldown > 5000)) {
+                        if (currentEmotion === lastTriggeredEmotion) {
+                            // Sustained check
+                            if (now - emotionStartTime > 1000) { // Held for 1 second (was 2s)
+                                log(`Emotion Sustained (${currentEmotion}) - Triggering Reaction!`);
+                                triggerEmotionReaction(currentEmotion);
+                                emotionCooldown = now;
+                                lastTriggeredEmotion = null; // Reset to avoid double trigger
+                            }
+                        } else {
+                            // New emotion started
+                            lastTriggeredEmotion = currentEmotion;
+                            emotionStartTime = now;
+                        }
+                    } else if (currentEmotion !== lastTriggeredEmotion) {
+                        // Reset tracker if emotion changes
+                        lastTriggeredEmotion = currentEmotion;
+                        emotionStartTime = now;
+                    }
+
+                } else {
+                    lastTriggeredEmotion = null; // Reset if confidence drops
+                    statusSpan.style.color = "#aaa";
                 }
+            } else {
+                video.style.border = "2px solid #333";
+                video.style.boxShadow = "none";
+                if (Math.random() < 0.05) log("No face detected (Check lighting/angle)");
             }
         } catch (e) {
-            // console.warn("Face detection error:", e);
+            console.warn("Face detection error:", e);
         }
 
     }, 500); // Check every 500ms
+}
+
+function triggerEmotionReaction(emotion) {
+    addMessage(`(Emotion Detected: ${emotion})`, 'user');
+
+    // Play sound or visual feedback?
+    // For now just console log and send
+
+    fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: "", emotion: emotion, gesture: "none" })
+    })
+        .then(res => res.json())
+        .then(data => handleResponse(data))
+        .catch(err => console.error("Error triggering emotion:", err));
 }
 
 function stopFaceDetection() {

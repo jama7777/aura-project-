@@ -1,13 +1,16 @@
-import google.generativeai as genai
 import os
+import google.generativeai as genai
 
-GENAI_API_KEY = "AIzaSyAyq1urrux5d0amkeyQ-XycxD37mR8YizY"
-genai.configure(api_key=GENAI_API_KEY)
+# Use the specific key the user wants
+key = "AIzaSyD38c0J_CDF4Mf-3TQPIASBQtd1yMJb4EY"
+genai.configure(api_key=key)
+
+print(f"Checking models for key ending in ...{key[-4:]}")
 
 try:
-    print("Listing available models:")
+    print("Listing available models...")
     for m in genai.list_models():
         if 'generateContent' in m.supported_generation_methods:
-            print(m.name)
+            print(f"- {m.name}")
 except Exception as e:
     print(f"Error listing models: {e}")

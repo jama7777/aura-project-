@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export class Avatar {
@@ -13,6 +13,8 @@ export class Avatar {
         this.clock = new THREE.Clock();
         this.isTalking = false;
         this.debugDiv = null;
+        this.faceMesh = null; // Store mesh with morph targets
+        this.morphTargetDictionary = {}; // Store name to index mapping
     }
 
     log(msg) {
@@ -107,64 +109,69 @@ export class Avatar {
             this.playIntroSequence();
         };
 
-        const modelLoader = new FBXLoader(loadingManager);
+        const modelLoader = new GLTFLoader(loadingManager);
 
-        // Load Character
-        // Using Hip Hop Dancing.fbx as base because character.fbx is too old (v6100)
-        this.log("Starting model load: /assets/animations/Hip Hop Dancing.fbx");
-        modelLoader.load('/assets/animations/Hip Hop Dancing.fbx', (object) => {
+        // Load Character (GLB)
+        this.log("Starting model load: /assets/character.glb");
+        modelLoader.load('/assets/character.glb', (gltf) => {
+            const object = gltf.scene;
             this.log("Model loaded successfully!");
             this.mixer = new THREE.AnimationMixer(object);
-
-            // Rename the default animation to 'dance'
-            if (object.animations && object.animations.length > 0) {
-                object.animations[0].name = 'dance';
-                this.cleanAnimationClips(object.animations[0]);
-            }
 
             object.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
-                    // Ensure material is visible
-                    if (child.material) {
-                        child.material.side = THREE.DoubleSide;
-                        child.material.needsUpdate = true;
+                    // Check for Morph Targets
+                    if (child.morphTargetInfluences && child.morphTargetDictionary) {
+                        console.log("Found Face Mesh with Morph Targets:", child.name);
+                        this.log(`Found Face Mesh: ${child.name} (${child.morphTargetInfluences.length} targets)`);
+                        this.faceMesh = child;
+                        this.morphTargetDictionary = child.morphTargetDictionary;
                     }
                 }
             });
 
-            // Auto-scale
+            // Auto-scale logic
             const box = new THREE.Box3().setFromObject(object);
             const size = box.getSize(new THREE.Vector3());
             this.log(`Model Size: ${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)}`);
 
             const maxDim = Math.max(size.x, size.y, size.z);
-            if (maxDim === 0) {
-                this.log("ERROR: Model has 0 size!");
-            } else {
-                const scale = 150 / maxDim;
+            if (maxDim > 0) {
+                const scale = 150 / maxDim; // Keep the same scale target
                 object.scale.set(scale, scale, scale);
-                this.log(`Applied Scale: ${scale.toFixed(4)}`);
+                // Adjust Y if needed. RPM models usually have 0 at feet.
+                object.position.y = -75; // Center vertically roughly
             }
-
-            // Center it
-            object.position.y = 0;
 
             this.scene.add(object);
-            this.model = object; // Save reference
+            this.model = object;
 
-            // Load Animations
-            this.loadAnimations(modelLoader);
-
+            // Load Animations (Still FBX? Mixamo animations on RPM need retargeting usually)
+            // For now, let's see if the GLB has animations or if we can use existing FBX.
+            // Using FBX animations on GLTF model in ThreeJS is tricky (bone names differ).
+            // We will attempt to use the existing FBX animations, but we might get errors.
+            // A better approach for RPM is .glb animations.
+            // Let's TRY to load the existing FBX animations and map them.
+            // BUT: FBXLoader returns a Group, GLTFLoader returns a Scene.
+            // Retargeting is hard here.
+            // Verification: Let's assume we lose body animations temporarily to prioritize Face.
+            // OR: Try to load basic mixamo animations if bone names match (Mixamorig:Hips vs Hips).
+            
+            // Temporary: Skip extra animations to ensure Face works first.
+            // Re-enable if bone names match.
+            // this.loadAnimations(new FBXLoader(loadingManager)); 
+            
+            this.log("Character ready. (Body animations disabled for GLB switch)");
+            
+            // To animate body, we need GLB animations. 
+            // For now, Face is the priority.
+            
         }, (xhr) => {
-            if (xhr.total > 0) {
-                const percent = (xhr.loaded / xhr.total * 100).toFixed(0);
-                // this.log(`Loading: ${percent}%`);
-            }
+             // Progress
         }, (error) => {
-            this.log(`ERROR loading model: ${error.message || error}`);
-            console.error('An error happened loading model:', error);
+            this.log(`ERROR loading model: ${error.message}`);
         });
     }
 
@@ -278,13 +285,28 @@ export class Avatar {
 
     setTalking(talking) {
         this.isTalking = talking;
-        // If we had a specific talk animation or morph targets, we'd use them here.
-        // For now, maybe just bob the head or switch to a 'talk' animation if available.
-        if (talking) {
-            this.playAnimation('talk'); // Will try to find 'talk' or fallback
-        } else {
-            this.playAnimation('idle'); // Will try to find 'idle' or fallback
+        // If we have face animations, we don't rely on this boolean as much for jaw movement
+        if (!talking) {
+            // Reset face if needed
+            this.resetFace();
         }
+    }
+
+    updateFace(blendshapes) {
+        if (!this.faceMesh || !this.morphTargetDictionary) return;
+
+        // blendshapes is a dict: { "jawOpen": 0.5, ... }
+        for (const [name, value] of Object.entries(blendshapes)) {
+            if (name in this.morphTargetDictionary) {
+                const index = this.morphTargetDictionary[name];
+                this.faceMesh.morphTargetInfluences[index] = value;
+            }
+        }
+    }
+
+    resetFace() {
+        if (!this.faceMesh) return;
+        this.faceMesh.morphTargetInfluences.fill(0);
     }
 
     onWindowResize() {

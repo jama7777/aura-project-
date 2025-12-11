@@ -11,3 +11,5 @@ TTS
 numpy
 speechbrain
 transformers
+grpcio
+grpcio-tools

@@ -20,20 +20,21 @@ def load_audio_models():
     global model, emotion_model
     if model is None:
         try:
+            print("Loading Whisper model (tiny)...")
             model = whisper.load_model("tiny")
             print("Whisper model loaded.")
         except Exception as e:
             print(f"Error loading Whisper model: {e}")
             model = None
 
+
     if emotion_model is None:
         try:
-            # Use the correct class for emotion recognition
-            emotion_model = EncoderClassifier.from_hparams(
-                source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
-                savedir="pretrained_models/emotion_model"
-            )
-            print("Audio Emotion model loaded.")
+            print("Loading Audio Emotion model (Transformers)...")
+            from transformers import pipeline
+            # Use a robust model from HuggingFace
+            emotion_model = pipeline("audio-classification", model="superb/wav2vec2-base-superb-er")
+            print("Audio Emotion model loaded (Transformers).")
         except Exception as e:
             print(f"Error loading Audio Emotion model: {e}")
             emotion_model = None
@@ -70,10 +71,21 @@ def analyze_emotion_file(file_path):
         
     if emotion_model:
         try:
-            # Classify
-            emotion_out = emotion_model.classify_file(file_path)
-            # emotion_out is usually (out_prob, score, index, text_lab)
-            return emotion_out[3][0]
+            # Classify using Transformers Pipeline
+            # Returns list of dicts: [{'score': 0.9, 'label': 'neutral'}, ...]
+            preds = emotion_model(file_path)
+            # Get top prediction
+            top_pred = preds[0]
+            label = top_pred['label']
+            
+            # Map labels if needed (Superb model uses abbreviations)
+            label_map = {
+                "neu": "neutral",
+                "hap": "happy",
+                "ang": "angry",
+                "sad": "sad",
+            }
+            return label_map.get(label, label)
         except Exception as e:
             print(f"Audio Emotion classification failed: {e}")
             return "neutral"
